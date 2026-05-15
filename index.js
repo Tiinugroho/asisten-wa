@@ -80,7 +80,6 @@ async function connectToWhatsApp() {
 
             if (!textMessage) return;
 
-            // Log hanya untuk chat pribadi
             console.log(`📩 Pesan Pribadi [Dari Saya: ${fromMe}]: ${textMessage}`);
 
             // ==========================================
@@ -101,7 +100,7 @@ async function connectToWhatsApp() {
                     statusSaya = 'aktif';
                     await sock.sendMessage(sender, { text: '⚙️ Status Asisten: Mode Aktif' });
                     return;
-                    } else if (command === '!mati') {
+                } else if (command === '!mati') {
                     statusSaya = 'mati';
                     await sock.sendMessage(sender, { text: '⚙️ Status Asisten: MATI (Hemat Kuota)' });
                     return;
@@ -112,6 +111,7 @@ async function connectToWhatsApp() {
                     return;
                 }
                 
+                // JIKA JATI MEMBALAS MANUAL
                 if (fromMe && !textMessage.startsWith('!')) {
                     if (antreanPesan[sender] && antreanPesan[sender].timer) {
                         clearTimeout(antreanPesan[sender].timer);
@@ -120,10 +120,11 @@ async function connectToWhatsApp() {
                         antreanPesan[sender].stepWaktu = 0;
                         antreanPesan[sender].kumpulanTeks = [];
                         antreanPesan[sender].timer = null;
+                        antreanPesan[sender].jumlahBalasan = 0; // RESET LIMIT BALASAN
                     }
                     if (statusSaya === 'ngoding') {
                         statusSaya = 'mati';
-                        console.log('📱 Membalas manual. Bot dimatikan.');
+                        console.log('📱 Membalas manual. Bot otomatis dimatikan.');
                     }
                     return; 
                 }
@@ -143,15 +144,22 @@ async function connectToWhatsApp() {
             }
 
             // ==========================================
-            // LOGIKA ANTREAN TIMER & RESPON AI
+            // LOGIKA ANTREAN TIMER & LIMIT RESPON AI
             // ==========================================
             
             if (!antreanPesan[sender]) {
                 antreanPesan[sender] = {
                     stepWaktu: 0, 
                     kumpulanTeks: [], 
-                    timer: null 
+                    timer: null,
+                    jumlahBalasan: 0 // PELACAK JUMLAH BALASAN AI
                 };
+            }
+
+            // FILTER LIMIT: Jika bukan pacar dan sudah dibalas 3x, abaikan chat
+            if (sender !== NOMOR_PACAR && antreanPesan[sender].jumlahBalasan >= 3) {
+                console.log(`🛑 Batas 3 balasan tercapai untuk ${sender}. AI mengabaikan pesan.`);
+                return;
             }
 
             // Tampung pesan yang masuk
@@ -178,19 +186,25 @@ async function connectToWhatsApp() {
 
                     let instruksiAI = "";
                     let pesanSistem = "";
+                    const balasanKe = antreanPesan[sender].jumlahBalasan + 1; // Mendeteksi ini balasan ke-berapa
 
+                    // KONDISI UNTUK PACAR (Tanpa Limit)
                     if (sender === NOMOR_PACAR) {
                         instruksiAI = "Kamu adalah asisten virtual pacarku. Balas dengan sangat manis, perhatian, sedikit manja, dan gunakan emoji yang lucu. Jangan kaku sama sekali, bersikaplah seperti pasangan yang menyayangi.";
-                    } else {
+                        pesanSistem = `[INFO SISTEM: Jati tidak membalas chat ini selama ${menitTunggu} menit. Jawab pesannya dengan natural sesuai personamu.]\n\n`;
+                    } 
+                    // KONDISI UNTUK ORANG LAIN (Maksimal 3 Limit)
+                    else {
                         instruksiAI = "Kamu adalah asisten virtual Jati. Jati adalah seorang Fullstack Developer. Jawablah pesan dari orang ini dengan sopan, ramah, dan ringkas. Sesuaikan obrolan dengan konteks IT jika relevan.";
-                    }
-
-                    const isPesanPertama = memoriPercakapan[sender].length === 0;
-
-                    if (isPesanPertama) {
-                        pesanSistem = `[INFO SISTEM: Ini pesan pertama. Beritahu pengirim bahwa Jati tidak membalas selama ${menitTunggu} menit karena sedang fokus ngoding. Setelah memberitahu, baru jawab pesannya dengan natural.]\n\n`;
-                    } else {
-                        pesanSistem = `[INFO SISTEM: Lanjutkan obrolan. Ingat bahwa Jati sedang ngoding dan belum membalas selama ${menitTunggu} menit. Jangan ulangi alasan ngoding terus-menerus kecuali relevan.]\n\n`;
+                        
+                        if (balasanKe === 3 && statusSaya === 'ngoding') {
+                            // INJEKSI PROMPT FINAL KHUSUS BALASAN KE-3
+                            pesanSistem = `[INFO SISTEM PENTING: Ini adalah batas maksimal balasan asisten (ke-3). Beritahu pengirim dengan sopan namun TERTULIS SANGAT JELAS bahwa Jati saat ini sedang fokus tingkat tinggi ngoding sistem dan asisten ini tidak akan membalas pesan lagi setelah ini. Instruksikan pengirim secara langsung untuk LANGSUNG MENELEPON via WhatsApp atau seluler jika memang ada keperluan yang sangat mendesak/darurat.]\n\n`;
+                        } else if (balasanKe === 1) {
+                            pesanSistem = `[INFO SISTEM: Ini pesan pertama. Beritahu pengirim bahwa Jati tidak membalas selama ${menitTunggu} menit karena sedang fokus ngoding. Setelah memberitahu, baru jawab pesannya dengan natural.]\n\n`;
+                        } else {
+                            pesanSistem = `[INFO SISTEM: Lanjutkan obrolan. Ingat bahwa Jati sedang ngoding dan belum membalas selama ${menitTunggu} menit. Jangan ulangi alasan ngoding terus-menerus.]\n\n`;
+                        }
                     }
 
                     try {
@@ -217,9 +231,10 @@ async function connectToWhatsApp() {
                         }
 
                         await sock.sendMessage(sender, { text: balasanAI });
-                        console.log(`🤖 [Membalas setelah ${menitTunggu} menit] -> ${balasanAI}\n`);
+                        console.log(`🤖 [Membalas setelah ${menitTunggu} menit | Balasan ke-${balasanKe}] -> ${balasanAI}\n`);
 
-                        // Naikkan durasi tunggu untuk chat berikutnya (misal dari 5 menit ke 15 menit)
+                        // Tambah hitungan balasan & naikkan durasi tunggu
+                        antreanPesan[sender].jumlahBalasan++;
                         antreanPesan[sender].stepWaktu++;
 
                     } catch (error) {
